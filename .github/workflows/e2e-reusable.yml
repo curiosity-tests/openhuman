@@ -1,4 +1,3 @@
----
 # Reusable E2E workflow — single source of truth for the desktop E2E recipe.
 #
 # Callers:
@@ -36,11 +35,7 @@ on:
         type: string
         default: curiosity-tests-racecar
       ref:
-        description: Git ref (tag or SHA) to test. Release workflows pass the
-          freshly-pushed staging/production tag here so pretest validates
-          the exact commit the build matrix will check out, not main HEAD
-          at workflow_dispatch time. Defaults to empty (checkout uses its
-          own default, i.e. the workflow's triggering ref).
+        description: Git ref (tag or SHA) to test. Release workflows pass the freshly-pushed staging/production tag here so pretest validates the exact commit the build matrix will check out, not main HEAD at workflow_dispatch time. Defaults to empty (checkout uses its own default, i.e. the workflow's triggering ref).
         type: string
         default: ""
       run_linux:
@@ -56,10 +51,7 @@ on:
         type: boolean
         default: false
       full:
-        description:
-          When true, run the entire spec suite via `e2e-run-session.sh` (no
-          spec arg). When false, run the selected desktop spec. Releases set
-          this to true.
+        description: When true, run the entire spec suite via `e2e-run-session.sh` (no spec arg). When false, run the selected desktop spec. Releases set this to true.
         type: boolean
         default: false
       spec_path:
@@ -104,153 +96,147 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
     timeout-minutes: 30
     steps:
-      - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
-        shell: sh
-        run: |
-          command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
-          elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
-          elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
-          elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
-          elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
-          elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
-          elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
-          fi || echo 'racecar prep: package install failed, continuing'
+    - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
+      shell: sh
+      run: |
+        command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
+        elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
+        elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
+        elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
+        elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
+        elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
+        elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
+        fi || echo 'racecar prep: package install failed, continuing'
 
-      - name: Checkout code
-        uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          ref: ${{ inputs.ref }}
-          fetch-depth: 1
-          persist-credentials: false
-          submodules: recursive
-      - name: Assert instrumentation is live
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Checkout code
+      uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        ref: ${{ inputs.ref }}
+        fetch-depth: 1
+        persist-credentials: false
+        submodules: recursive
+    - name: Cache pnpm store
+      uses: actions/cache@v6
+      with:
+        path: ~/.local/share/pnpm/store
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-
 
-      - name: Cache pnpm store
-        uses: actions/cache@v6
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
-
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target
-            app/src-tauri -> target
-          cache-on-failure: true
-          key: e2e-linux-unified
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          . -> target
+          app/src-tauri -> target
+        cache-on-failure: true
+        key: e2e-linux-unified
 
       # CEF runtime download cache — matches the key shape used by
       # build-desktop.yml so a release build and an E2E run on the same
       # commit can share a single download.
-      - name: Cache CEF binary distribution
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/tauri-cef
-          key: cef-x86_64-unknown-linux-gnu-${{ hashFiles('app/src-tauri/Cargo.toml') }}
-          restore-keys: |
-            cef-x86_64-unknown-linux-gnu-
+    - name: Cache CEF binary distribution
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/tauri-cef
+        key: cef-x86_64-unknown-linux-gnu-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+        restore-keys: |
+          cef-x86_64-unknown-linux-gnu-
 
-      - name: Cache Appium global install
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.appium
-            /usr/local/lib/node_modules/appium
-          key: appium3-chromium-${{ runner.os }}-v2
+    - name: Cache Appium global install
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.appium
+          /usr/local/lib/node_modules/appium
+        key: appium3-chromium-${{ runner.os }}-v2
 
-      - name: Install JS dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+    - name: Install JS dependencies
+      run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
-      - name: Ensure .env exists for E2E build
-        run: |
-          touch .env
-          touch app/.env
+    - name: Ensure .env exists for E2E build
+      run: |
+        touch .env
+        touch app/.env
 
-      - name: Install Appium and chromium driver
-        run: |
-          if ! command -v appium >/dev/null 2>&1; then
-            bash scripts/ci-cancel-aware.sh npm install -g appium@3
-          fi
-          # appium-chromium-driver is loaded from ~/.appium and imports the
-          # appium package from that tree at runtime.
-          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
-          # `appium driver list --installed` can miss cached installs on some
-          # Appium builds; install idempotently and ignore "already installed".
-          bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
+    - name: Install Appium and chromium driver
+      run: |
+        if ! command -v appium >/dev/null 2>&1; then
+          bash scripts/ci-cancel-aware.sh npm install -g appium@3
+        fi
+        # appium-chromium-driver is loaded from ~/.appium and imports the
+        # appium package from that tree at runtime.
+        bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
+        # `appium driver list --installed` can miss cached installs on some
+        # Appium builds; install idempotently and ignore "already installed".
+        bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
-      - name: Install checksum-pinned TinyMemory test module
-        run: |
-          # Keep memory E2E independent of the GitHub release-metadata API.
-          # tinybus validates every directory ancestor, so the fixture must
-          # live outside the runner-owned checkout in this root-run container.
-          # Version and digest are ONE decision and live on adjacent lines for that
-          # reason: the archive name, the release tag and the checksum each used to
-          # carry the version independently, so a bump could update two of the three
-          # and leave a stale digest that only fails after the download. Both values
-          # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
-          # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.14.1"
-          memory_sha256="aedcd016c4dfd6c3d65114cb76061281cea5243b281253a7db17dfd0d6de284c"
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          memory_dir="$module_root/tinymemory"
-          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir"
-          mkdir -p "$memory_dir"
-          curl --fail --location --silent --show-error \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
-            --output "$memory_archive"
-          echo "${memory_sha256}  $memory_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
-          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
-            >> "$GITHUB_ENV"
+    - name: Install checksum-pinned TinyMemory test module
+      run: |
+        # Keep memory E2E independent of the GitHub release-metadata API.
+        # tinybus validates every directory ancestor, so the fixture must
+        # live outside the runner-owned checkout in this root-run container.
+        # Version and digest are ONE decision and live on adjacent lines for that
+        # reason: the archive name, the release tag and the checksum each used to
+        # carry the version independently, so a bump could update two of the three
+        # and leave a stale digest that only fails after the download. Both values
+        # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
+        # which is the authoritative pin — copy them from there, never recompute.
+        memory_version="1.14.1"
+        memory_sha256="aedcd016c4dfd6c3d65114cb76061281cea5243b281253a7db17dfd0d6de284c"
+        module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        memory_dir="$module_root/tinymemory"
+        memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
+        rm -rf "$memory_dir"
+        mkdir -p "$memory_dir"
+        curl --fail --location --silent --show-error \
+          "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
+          --output "$memory_archive"
+        echo "${memory_sha256}  $memory_archive" \
+          | sha256sum --check
+        tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
+        echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
+          >> "$GITHUB_ENV"
 
-      - name: Build E2E app
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
+    - name: Build E2E app
+      run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
-      - name: Run E2E (${{ inputs.spec_label }})
-        if: ${{ !inputs.full }}
-        run: |
-          bash scripts/ci-cancel-aware.sh \
-            xvfb-run -a --server-args="-screen 0 1280x960x24" \
-            bash app/scripts/e2e-run-session.sh "${{ inputs.spec_path }}" "${{ inputs.spec_label }}"
+    - name: Run E2E (${{ inputs.spec_label }})
+      if: ${{ !inputs.full }}
+      run: |
+        bash scripts/ci-cancel-aware.sh \
+          xvfb-run -a --server-args="-screen 0 1280x960x24" \
+          bash app/scripts/e2e-run-session.sh "${{ inputs.spec_path }}" "${{ inputs.spec_label }}"
 
-      - name: Upload E2E failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-failure-logs-${{ runner.os }}-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/openhuman-e2e-app-*.log
-            /tmp/openhuman-e2e-app-*.log
-            app/test/e2e/artifacts/
-          retention-days: 7
-          if-no-files-found: ignore
+    - name: Upload E2E failure artifacts
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-failure-logs-${{ runner.os }}-${{ github.run_id }}
+        path: |
+          ${{ runner.temp }}/openhuman-e2e-app-*.log
+          /tmp/openhuman-e2e-app-*.log
+          app/test/e2e/artifacts/
+        retention-days: 7
+        if-no-files-found: ignore
 
-      - name: Write job summary
-        if: always()
-        run: |
-          echo "## E2E Results (${{ runner.os }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f /tmp/e2e-summary.txt ]; then
-            cat /tmp/e2e-summary.txt >> $GITHUB_STEP_SUMMARY
-          else
-            echo "No summary file found." >> $GITHUB_STEP_SUMMARY
-          fi
+    - name: Write job summary
+      if: always()
+      run: |
+        echo "## E2E Results (${{ runner.os }})" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f /tmp/e2e-summary.txt ]; then
+          cat /tmp/e2e-summary.txt >> $GITHUB_STEP_SUMMARY
+        else
+          echo "No summary file found." >> $GITHUB_STEP_SUMMARY
+        fi
 
   # Full-suite Linux is now build-once-then-fanout: one `build-linux-full`
   # job produces the binary + frontend dist + CEF runtime as a single
@@ -259,6 +245,83 @@ jobs:
   # (only the first shard would otherwise populate the binary/CEF caches,
   # the others would lose the race and rebuild) and guarantees the binary
   # and its libcef.so are always packaged together.
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   build-linux-full:
     if: inputs.run_linux && inputs.full
     name: Build (Linux full)
@@ -269,85 +332,156 @@ jobs:
     # package the unified app before the fanout shards start.
     timeout-minutes: 60
     steps:
-      - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
-        shell: sh
-        run: |
-          command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
-          elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
-          elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
-          elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
-          elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
-          elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
-          elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
-          fi || echo 'racecar prep: package install failed, continuing'
+    - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
+      shell: sh
+      run: |
+        command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
+        elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
+        elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
+        elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
+        elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
+        elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
+        elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
+        fi || echo 'racecar prep: package install failed, continuing'
 
-      - name: Checkout code
-        uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          ref: ${{ inputs.ref }}
-          fetch-depth: 1
-          submodules: recursive
-      - name: Assert instrumentation is live
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Checkout code
+      uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        ref: ${{ inputs.ref }}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Cache pnpm store
+      uses: actions/cache@v6
+      with:
+        path: ~/.local/share/pnpm/store
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-
 
-      - name: Cache pnpm store
-        uses: actions/cache@v6
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          . -> target
+          app/src-tauri -> target
+        cache-on-failure: true
+        key: e2e-linux-unified
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target
-            app/src-tauri -> target
-          cache-on-failure: true
-          key: e2e-linux-unified
+    - name: Install JS dependencies
+      run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
-      - name: Install JS dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+    - name: Ensure .env exists for E2E build
+      run: |
+        touch .env
+        touch app/.env
 
-      - name: Ensure .env exists for E2E build
-        run: |
-          touch .env
-          touch app/.env
+    - name: Build E2E app
+      run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
-      - name: Build E2E app
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
+    - name: Package build artifact
+      run: |
+        # Stage everything the test shards need at the layout they expect
+        # under a single directory, so the consumer can extract straight
+        # into the workspace.
+        STAGE="$(mktemp -d)"
+        mkdir -p "$STAGE/repo/app/src-tauri/target/debug"
+        mkdir -p "$STAGE/repo/app/dist"
+        cp -a app/src-tauri/target/debug/OpenHuman "$STAGE/repo/app/src-tauri/target/debug/"
+        cp -a app/dist/. "$STAGE/repo/app/dist/"
+        tar -czf e2e-build-linux.tar.gz -C "$STAGE" repo
+        ls -lh e2e-build-linux.tar.gz
 
-      - name: Package build artifact
-        run: |
-          # Stage everything the test shards need at the layout they expect
-          # under a single directory, so the consumer can extract straight
-          # into the workspace.
-          STAGE="$(mktemp -d)"
-          mkdir -p "$STAGE/repo/app/src-tauri/target/debug"
-          mkdir -p "$STAGE/repo/app/dist"
-          cp -a app/src-tauri/target/debug/OpenHuman "$STAGE/repo/app/src-tauri/target/debug/"
-          cp -a app/dist/. "$STAGE/repo/app/dist/"
-          tar -czf e2e-build-linux.tar.gz -C "$STAGE" repo
-          ls -lh e2e-build-linux.tar.gz
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-build-linux-${{ github.run_id }}
+        path: e2e-build-linux.tar.gz
+        retention-days: 1
+        if-no-files-found: error
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-build-linux-${{ github.run_id }}
-          path: e2e-build-linux.tar.gz
-          retention-days: 1
-          if-no-files-found: error
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
 
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   e2e-linux-full:
     if: inputs.run_linux && inputs.full
     needs: build-linux-full
@@ -360,159 +494,230 @@ jobs:
       fail-fast: false
       matrix:
         shard:
-          - { name: foundation, suites: "auth,navigation,system" }
-          - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+        - {name: foundation, suites: "auth,navigation,system"}
+        - {name: chat, suites: "chat,skills,journeys"}
+        - {name: providers, suites: "providers,notifications"}
+        - {name: provider-web, suites: "provider-web"}
+        - {name: webhooks, suites: "webhooks"}
+        - {name: connectors, suites: "connectors"}
+        - {name: payments, suites: "payments"}
+        - {name: settings, suites: "settings"}
     steps:
-      - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
-        shell: sh
-        run: |
-          command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
-          elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
-          elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
-          elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
-          elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
-          elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
-          elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
-          fi || echo 'racecar prep: package install failed, continuing'
+    - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
+      shell: sh
+      run: |
+        command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
+        elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
+        elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
+        elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
+        elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
+        elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
+        elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
+        fi || echo 'racecar prep: package install failed, continuing'
 
-      - name: Checkout code
-        uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          ref: ${{ inputs.ref }}
-          fetch-depth: 1
-          submodules: recursive
-      - name: Assert instrumentation is live
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Checkout code
+      uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        ref: ${{ inputs.ref }}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Cache pnpm store
+      uses: actions/cache@v6
+      with:
+        path: ~/.local/share/pnpm/store
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-
 
-      - name: Cache pnpm store
-        uses: actions/cache@v6
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+    - name: Cache Appium global install
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.appium
+          /usr/local/lib/node_modules/appium
+        key: appium3-chromium-${{ runner.os }}-v2
 
-      - name: Cache Appium global install
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.appium
-            /usr/local/lib/node_modules/appium
-          key: appium3-chromium-${{ runner.os }}-v2
+    - name: Install JS dependencies (for test harness only)
+      run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
-      - name: Install JS dependencies (for test harness only)
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+    - name: Install Appium and chromium driver
+      run: |
+        if ! command -v appium >/dev/null 2>&1; then
+          bash scripts/ci-cancel-aware.sh npm install -g appium@3
+        fi
+        bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
+        bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
-      - name: Install Appium and chromium driver
-        run: |
-          if ! command -v appium >/dev/null 2>&1; then
-            bash scripts/ci-cancel-aware.sh npm install -g appium@3
-          fi
-          bash scripts/ci-cancel-aware.sh npm install --prefix "$HOME/.appium" appium@3
-          bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
+    - name: Download build artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: e2e-build-linux-${{ github.run_id }}
+        path: .
 
-      - name: Download build artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: e2e-build-linux-${{ github.run_id }}
-          path: .
+    - name: Restore build artifact into workspace
+      run: |
+        tar -xzf e2e-build-linux.tar.gz
+        # The artifact contains: repo/{app/src-tauri/target/debug/OpenHuman, app/dist/...}.
+        mkdir -p app/src-tauri/target/debug app/dist
+        cp -a repo/app/src-tauri/target/debug/OpenHuman app/src-tauri/target/debug/
+        cp -a repo/app/dist/. app/dist/
+        rm -rf repo e2e-build-linux.tar.gz
+        chmod +x app/src-tauri/target/debug/OpenHuman
+        ls -la app/src-tauri/target/debug/OpenHuman app/dist | head
 
-      - name: Restore build artifact into workspace
-        run: |
-          tar -xzf e2e-build-linux.tar.gz
-          # The artifact contains: repo/{app/src-tauri/target/debug/OpenHuman, app/dist/...}.
-          mkdir -p app/src-tauri/target/debug app/dist
-          cp -a repo/app/src-tauri/target/debug/OpenHuman app/src-tauri/target/debug/
-          cp -a repo/app/dist/. app/dist/
-          rm -rf repo e2e-build-linux.tar.gz
-          chmod +x app/src-tauri/target/debug/OpenHuman
-          ls -la app/src-tauri/target/debug/OpenHuman app/dist | head
+    - name: Install checksum-pinned TinyMemory test module
+      if: matrix.shard.name == 'providers'
+      run: |
+        # memory-roundtrip runs in this shard. Supply the native module
+        # directly so the packaged app never depends on GitHub's release
+        # metadata API while the test is running.
+        # Version and digest are ONE decision and live on adjacent lines for that
+        # reason: the archive name, the release tag and the checksum each used to
+        # carry the version independently, so a bump could update two of the three
+        # and leave a stale digest that only fails after the download. Both values
+        # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
+        # which is the authoritative pin — copy them from there, never recompute.
+        memory_version="1.14.1"
+        memory_sha256="aedcd016c4dfd6c3d65114cb76061281cea5243b281253a7db17dfd0d6de284c"
+        module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        memory_dir="$module_root/tinymemory"
+        memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
+        rm -rf "$memory_dir"
+        mkdir -p "$memory_dir"
+        curl --fail --location --silent --show-error \
+          "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
+          --output "$memory_archive"
+        echo "${memory_sha256}  $memory_archive" \
+          | sha256sum --check
+        tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
+        echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
+          >> "$GITHUB_ENV"
 
-      - name: Install checksum-pinned TinyMemory test module
-        if: matrix.shard.name == 'providers'
-        run: |
-          # memory-roundtrip runs in this shard. Supply the native module
-          # directly so the packaged app never depends on GitHub's release
-          # metadata API while the test is running.
-          # Version and digest are ONE decision and live on adjacent lines for that
-          # reason: the archive name, the release tag and the checksum each used to
-          # carry the version independently, so a bump could update two of the three
-          # and leave a stale digest that only fails after the download. Both values
-          # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
-          # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.14.1"
-          memory_sha256="aedcd016c4dfd6c3d65114cb76061281cea5243b281253a7db17dfd0d6de284c"
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          memory_dir="$module_root/tinymemory"
-          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir"
-          mkdir -p "$memory_dir"
-          curl --fail --location --silent --show-error \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
-            --output "$memory_archive"
-          echo "${memory_sha256}  $memory_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
-          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
-            >> "$GITHUB_ENV"
+    - name: Run E2E shard (${{ matrix.shard.name }} — suites=${{ matrix.shard.suites }})
+      env:
+        E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
+        E2E_USE_TAURI_DRIVER: "1"
+      run: |
+        BAIL_FLAG=""
+        if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then
+          BAIL_FLAG="--bail"
+        fi
+        bash scripts/ci-cancel-aware.sh \
+          xvfb-run -a --server-args="-screen 0 1280x960x24" \
+          bash app/scripts/e2e-run-all-flows.sh --skip-preflight \
+            --suite=${{ matrix.shard.suites }} $BAIL_FLAG
 
-      - name: Run E2E shard (${{ matrix.shard.name }} — suites=${{ matrix.shard.suites }})
-        env:
-          E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
-          E2E_USE_TAURI_DRIVER: "1"
-        run: |
-          BAIL_FLAG=""
-          if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then
-            BAIL_FLAG="--bail"
-          fi
-          bash scripts/ci-cancel-aware.sh \
-            xvfb-run -a --server-args="-screen 0 1280x960x24" \
-            bash app/scripts/e2e-run-all-flows.sh --skip-preflight \
-              --suite=${{ matrix.shard.suites }} $BAIL_FLAG
+    - name: Upload E2E failure artifacts
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
+        path: |
+          ${{ runner.temp }}/openhuman-e2e-app-*.log
+          /tmp/openhuman-e2e-app-*.log
+          app/test/e2e/artifacts/
+        retention-days: 7
+        if-no-files-found: ignore
 
-      - name: Upload E2E failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/openhuman-e2e-app-*.log
-            /tmp/openhuman-e2e-app-*.log
-            app/test/e2e/artifacts/
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Write job summary
-        if: always()
-        run: |
-          echo "## E2E Results (${{ runner.os }} / ${{ matrix.shard.name }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f /tmp/e2e-summary.txt ]; then
-            cat /tmp/e2e-summary.txt >> $GITHUB_STEP_SUMMARY
-          else
-            echo "No summary file found." >> $GITHUB_STEP_SUMMARY
-          fi
+    - name: Write job summary
+      if: always()
+      run: |
+        echo "## E2E Results (${{ runner.os }} / ${{ matrix.shard.name }})" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f /tmp/e2e-summary.txt ]; then
+          cat /tmp/e2e-summary.txt >> $GITHUB_STEP_SUMMARY
+        else
+          echo "No summary file found." >> $GITHUB_STEP_SUMMARY
+        fi
 
   # Rust-side E2E counterpart to the Tauri runs above. Same Linux-only
   # scope (CI does not run this on macOS or Windows — the Rust core is
   # platform-independent, so one OS is enough signal). Boots the same
   # `scripts/mock-api-server.mjs` the Tauri specs hit, then runs every
   # `tests/*_e2e.rs` suite against it.
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   rust-e2e-linux:
     if: inputs.run_linux
     name: E2E (Linux / Rust integration suite)
@@ -524,62 +729,56 @@ jobs:
       CARGO_INCREMENTAL: "0"
       RUST_BACKTRACE: "1"
     steps:
-      - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
-        shell: sh
-        run: |
-          command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
-          elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
-          elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
-          elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
-          elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
-          elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
-          elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
-          fi || echo 'racecar prep: package install failed, continuing'
+    - name: Install curl/bash for action-checkout (racecar; ungated, both arms)
+      shell: sh
+      run: |
+        command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && exit 0
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates bash
+        elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates bash
+        elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates bash
+        elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates bash
+        elif command -v zypper >/dev/null 2>&1; then zypper -n install curl ca-certificates bash
+        elif command -v xbps-install >/dev/null 2>&1; then xbps-install -Sy curl bash
+        elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm curl bash
+        fi || echo 'racecar prep: package install failed, continuing'
 
-      - name: Checkout code
-        uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          ref: ${{ inputs.ref }}
-          fetch-depth: 1
-          persist-credentials: false
-          submodules: recursive
-      - name: Assert instrumentation is live
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Checkout code
+      uses: crashappsec/action-checkout@e9ff46a65f6403d9d88b87d248c3dfa41550ec75
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        ref: ${{ inputs.ref }}
+        fetch-depth: 1
+        persist-credentials: false
+        submodules: recursive
+    - name: Cache pnpm store
+      uses: actions/cache@v6
+      with:
+        path: ~/.local/share/pnpm/store
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-
 
-      - name: Cache pnpm store
-        uses: actions/cache@v6
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: . -> target
+        cache-on-failure: true
+        key: rust-e2e-linux
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          cache-on-failure: true
-          key: rust-e2e-linux
+    - name: Install JS dependencies
+      run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
-      - name: Install JS dependencies
-        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+    - name: Ensure .env exists for tests
+      run: |
+        touch .env
+        touch app/.env
 
-      - name: Ensure .env exists for tests
-        run: |
-          touch .env
-          touch app/.env
-
-      - name: Run Rust E2E suite (tests/*_e2e.rs vs mock backend)
-        run: bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
+    - name: Run Rust E2E suite (tests/*_e2e.rs vs mock backend)
+      run: bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
 
       # No artifact uploads here either — same release-workflow reuse
       # concern as the Tauri job above. Mock-backend log lives at
@@ -612,3 +811,80 @@ jobs:
   # download, instead of each shard rebuilding on a cold binary cache.
   # ---------------------------------------------------------------------------
 
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
